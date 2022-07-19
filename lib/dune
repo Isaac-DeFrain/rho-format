@@ -1,3 +1,4 @@
 (library
- (name rho_format)
- (public_name rho_format))
+ (name lib_rf)
+ (public_name rho_format)
+ (libraries core))

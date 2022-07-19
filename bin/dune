@@ -1,0 +1,8 @@
+(executable
+ (name main)
+ (public_name rho_format)
+ (libraries
+  ; external
+  core
+  ; internal
+  lib_rf))
