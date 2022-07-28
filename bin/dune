@@ -3,6 +3,6 @@
  (public_name rho_format)
  (libraries
   ; external
-  core
+  base
   ; internal
-  lib_rf))
+  rho_format))

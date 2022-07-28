@@ -1,4 +1,6 @@
 (library
- (name lib_rf)
+ (name rho_format)
  (public_name rho_format)
- (libraries core))
+ (libraries base)
+ (preprocess
+  (pps ppx_jane)))
