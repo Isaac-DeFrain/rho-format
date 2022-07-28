@@ -2,23 +2,8 @@
 
 [@@@warning "-27"]
 
-(* configuration *)
-
-type config =
-  { width : int
-  ; indent : int
-  ; align_join : bool
-  ; new_line_eof : bool
-  ; new_line_new : bool
-  ; new_line_par : bool
-  ; new_line_join : bool
-  ; new_line_brace : bool
-  ; fluffy_ite : bool
-  ; fluffy_for : bool
-  ; fluffy_par : bool
-  ; fluffy_paren : bool
-  ; fluffy_brace : bool
-  }
+open! Base
+open! Config
 
 (* Abstract syntax tree *)
 
@@ -31,28 +16,33 @@ type proc =
   | PVar of string
   | New of (name * name list) * proc
   | Bundle of bool * bool * proc
-  (* 0 = peek, 1 = *)
-  | Receive of binds * proc
+  | Consume of binds * proc
   | Bang of bool * name * proc list
   | Match of proc * match_cases
   | List of proc list
   | Set of proc list
   | Map of (proc * proc) list
   | Par of proc list
+  (* | IfThenElse of proc * proc * proc *)
   | Eval of name
   | Paren of proc
   | Brace of proc
+[@@deriving compare]
 
 and bind_kind =
   | Peek
   | Linear
   | Persistent
 
+and bind_combinator =
+  | Sequential
+  | Parallel
+
 and match_case = proc_pat * proc
 
 and match_cases = Cases of match_case list
 
-and binds = Binds of bind_kind * (name_pats * name) list
+and binds = Binds of bind_kind * bind_combinator * (name_pats * name) list
 
 and procs = Procs of proc list
 
@@ -65,7 +55,7 @@ and proc_pat =
   (* processes are patterns too *)
   | Proc of proc
   | BundlePat of bool * bool * proc_pat
-  | ReceivePat of bind_pats * proc_pat
+  | ConsumePat of bind_pats * proc_pat
   | BangPat of bool * name_pat * proc_pats
   (* logical patterns *)
   | And of proc_pat * proc_pat
@@ -79,6 +69,9 @@ and proc_pats = Pats of proc_pat list
 and name =
   | NVar of string
   | Quote of proc
+  (* Rholang v1.1 *)
+  (* | Ret_no_args of string *)
+  (* | Ret_args of string * proc list *)
   (* DeBruijn indices *)
   | Unforg of int * int
 
@@ -101,28 +94,13 @@ and wrappers =
   | WNew of string
 
 (* viewing functions *)
-let std_cfg =
-  { width = 80
-  ; indent = 2
-  ; align_join = true
-  ; new_line_eof = true
-  ; new_line_new = true
-  ; new_line_par = true
-  ; new_line_join = true
-  ; new_line_brace = true
-  ; fluffy_ite = true
-  ; fluffy_for = true
-  ; fluffy_par = true
-  ; fluffy_paren = false
-  ; fluffy_brace = true
-  }
 
-open Printf
+open Caml.Printf
 
 let rec view_proc ind ?(cfg = std_cfg) ?(new_line = false) = function
   | Nil -> String.make ind ' ' ^ "Nil"
-  | Bool b -> String.make ind ' ' ^ string_of_bool b
-  | Int i -> String.make ind ' ' ^ string_of_int i
+  | Bool b -> String.make ind ' ' ^ Bool.to_string b
+  | Int i -> String.make ind ' ' ^ Int.to_string i
   | Str s -> String.make ind ' ' ^ "\"" ^ s ^ "\""
   | PVar p -> String.make ind ' ' ^ p
   | Brace p ->
@@ -139,7 +117,7 @@ let rec view_proc ind ?(cfg = std_cfg) ?(new_line = false) = function
   | Bundle (false, false, p) ->
     wrap_with_cfg ind cfg BundleZero @@ view_proc ind ~cfg p
   | Bundle (true, true, p) -> view_proc ind ~cfg p
-  | Receive (bs, p) ->
+  | Consume (bs, p) ->
     wrap_with_cfg ind cfg (For (view_binds ind cfg bs)) @@ view_proc ind ~cfg p
   | Bang (per, ch, ps) ->
     wrap_with_cfg ind cfg (Send (per, view_name ind cfg ch))
@@ -152,7 +130,7 @@ let rec view_proc ind ?(cfg = std_cfg) ?(new_line = false) = function
   | List ps -> "[" ^ view_procs ind cfg (Procs ps) ^ "]"
   | Set ps -> view_set ind cfg ps
   | Map kvs -> view_map ind cfg kvs
-  | Par ps -> String.concat " | " @@ List.map (view_proc ind ~cfg) ps
+  | Par ps -> String.concat ~sep:" | " @@ List.map ~f:(view_proc ind ~cfg) ps
   | Eval n -> "*" ^ view_name ind cfg n
   | Paren p -> "(" ^ view_proc ind ~cfg p ^ ")"
   | Brace p -> "{" ^ view_proc ind ~cfg p ^ "}"
@@ -161,26 +139,32 @@ and view_match_case ind cfg (pat, p) =
   view_proc_pat ind cfg pat ^ " => {" ^ view_proc ind ~cfg p ^ "}"
 
 and view_match_cases ind cfg (Cases l) =
-  String.concat "\n" @@ List.map (view_match_case ind cfg) l
+  String.concat ~sep:"\n" @@ List.map ~f:(view_match_case ind cfg) l
 
 and view_bind ind cfg np n = function
   | Peek -> view_name_pats ind cfg np ^ " <<- " ^ view_name ind cfg n
   | Linear -> view_name_pats ind cfg np ^ " <- " ^ view_name ind cfg n
   | Persistent -> view_name_pats ind cfg np ^ " <= " ^ view_name ind cfg n
 
-and view_binds ind cfg (Binds (bk, l)) =
+and view_binds ind cfg (Binds (bk, bc, l)) =
   match l with
   | [] -> ""
   | (np, n) :: tl ->
-    view_bind ind cfg np n bk ^ String.concat "; "
-    @@ List.map (fun (x, y) -> view_bind ind cfg x y bk) tl
+    view_bind ind cfg np n bk
+    ^ String.concat ~sep:(view_bind_combinator bc)
+    @@ List.map ~f:(fun (x, y) -> view_bind ind cfg x y bk) tl
+
+and view_bind_combinator = function
+  | Sequential -> "; "
+  | Parallel -> " & "
 
 and view_procs ind cfg (Procs ps) =
   match ps with
   | [] -> ""
   | p :: tl ->
     sprintf "%s, %s" (view_proc ind ~cfg p)
-      (String.concat ", " @@ List.map (view_proc ind ~cfg) tl)
+    @@ String.concat ~sep:", "
+    @@ List.map ~f:(view_proc ind ~cfg) tl
 
 and view_proc_pat ind cfg = function
   | BoolPat -> String.make ind ' ' ^ "Bool"
@@ -195,7 +179,7 @@ and view_proc_pat ind cfg = function
     wrap_with_cfg ind cfg BundleMinus @@ view_proc_pat ind cfg p
   | BundlePat (false, false, p) ->
     wrap_with_cfg ind cfg BundleZero @@ view_proc_pat ind cfg p
-  | ReceivePat (bs, p) ->
+  | ConsumePat (bs, p) ->
     wrap_with_cfg ind cfg (For (view_bind_pats ind cfg bs))
     @@ view_proc_pat ind cfg p
   | BangPat (per, npat, pats) ->
@@ -206,31 +190,31 @@ and view_proc_pat ind cfg = function
   | Not p -> "~" ^ view_proc_pat ind cfg p
 
 and view_proc_pats ind cfg (Pats pats) =
-  String.concat ", " @@ List.map (view_proc_pat ind cfg) pats
+  String.concat ~sep:", " @@ List.map ~f:(view_proc_pat ind cfg) pats
 
 and view_name ind cfg = function
   | NVar n -> n
   | Quote p -> "@" ^ view_proc ind ~cfg p
-  | Unforg (m, n) -> "x(" ^ string_of_int m ^ " " ^ string_of_int n ^ ")"
+  | Unforg (m, n) -> "x(" ^ Int.to_string m ^ " " ^ Int.to_string n ^ ")"
 
 and view_names ind cfg (Names ns) =
-  String.concat ", " @@ List.map (view_name ind cfg) ns
+  String.concat ~sep:", " @@ List.map ~f:(view_name ind cfg) ns
 
 and view_name_pat ind cfg = function
   | QuotePat pat -> "@" ^ view_proc_pat ind cfg pat
   | NWilcdcard -> "_"
 
 and view_name_pats ind cfg (NPats nps) =
-  String.concat ", " @@ List.map (view_name_pat ind cfg) nps
+  String.concat ~sep:", " @@ List.map ~f:(view_name_pat ind cfg) nps
 
 and view_set ind cfg ps =
-  "Set("
-  ^ view_procs ind cfg (Procs (Core.List.dedup_and_sort ~compare ps))
-  ^ ")"
+  sprintf "Set(%s)"
+  @@ view_procs ind cfg (Procs (List.dedup_and_sort ~compare:compare_proc ps))
 
 and view_map ind cfg kvs = sprintf "{%s}" @@ view_kvs ind cfg kvs
 
-and view_kvs ind cfg kvs = String.concat ",\n" @@ List.map (view_kv ind cfg) kvs
+and view_kvs ind cfg kvs =
+  String.concat ~sep:",\n" @@ List.map ~f:(view_kv ind cfg) kvs
 
 and view_kv ind cfg (k, v) =
   sprintf "%s : %s" (view_proc (ind + cfg.indent) ~cfg k) (view_proc 0 ~cfg v)
@@ -245,8 +229,8 @@ and view_bind_pats ind cfg (BindPats (bk, l)) =
   | [] -> ""
   | (np, n) :: tl ->
     view_bind_pat ind cfg np n bk
-    ^ String.concat "; "
-    @@ List.map (fun (x, y) -> view_bind_pat ind cfg x y bk) tl
+    ^ String.concat ~sep:"; "
+    @@ List.map ~f:(fun (x, y) -> view_bind_pat ind cfg x y bk) tl
 
 and wrap_with_cfg ind cfg ?(new_line = false) = function
   | Braces ->
