@@ -1,5 +1,6 @@
-(test
- (name test_rf)
+(library
+ (name expect_tests)
+ (inline_tests)
  (libraries base qcheck qcheck-alcotest rho_format)
  (preprocess
   (pps ppx_jane bisect_ppx --conditional))
