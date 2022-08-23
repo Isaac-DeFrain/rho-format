@@ -7,3 +7,7 @@
   - let
   - improved for-comprehension
   - sequntial send
+- string interpolation
+- methods on data structures
+- lexer/parser (Menhir)
+- tests
