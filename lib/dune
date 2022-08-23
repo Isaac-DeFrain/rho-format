@@ -2,5 +2,6 @@
  (name rho_format)
  (public_name rho_format)
  (libraries base)
+ (inline_tests)
  (preprocess
   (pps ppx_jane)))
